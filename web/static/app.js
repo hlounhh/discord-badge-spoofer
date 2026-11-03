@@ -38,8 +38,29 @@ function updateAuthButtons() {
   }
 }
 
+async function refreshData() {
+  try {
+    const [resStatus, resLogs] = await Promise.all([
+      fetch('/api/status?clientId=' + encodeURIComponent(CLIENT_ID)),
+      fetch('/api/logs?clientId=' + encodeURIComponent(CLIENT_ID))
+    ]);
+    if (resStatus.ok) {
+      const status = await resStatus.json();
+      updateStatus(status);
+    }
+    if (resLogs.ok) {
+      const data = await resLogs.json();
+      if (data.logs && data.logs.length > 0) {
+        renderLogs(data.logs);
+      }
+    }
+  } catch (e) {}
+}
+
 function initApp() {
   updateAuthButtons();
+  refreshData();
+  setInterval(refreshData, 1500);
   connectSSE();
   setupEventListeners();
   loadGamesList();
@@ -122,6 +143,7 @@ function updateStatus(status) {
 }
 
 function renderLogs(logs) {
+  if (!logs || !logs.length) return;
   elLogWindow.innerHTML = '';
   logs.forEach(appendLog);
 }
@@ -216,6 +238,7 @@ function setupEventListeners() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId: CLIENT_ID })
       });
+      refreshData();
     } else {
       const auth = getClientAuth();
       if (!auth.token.trim()) {
@@ -252,7 +275,9 @@ function setupEventListeners() {
         })
       });
       const data = await res.json();
-      if (!data.success) {
+      if (data.success) {
+        refreshData();
+      } else {
         if (data.missing === 'token') {
           openModal('modalToken');
           const input = document.getElementById('inputToken');

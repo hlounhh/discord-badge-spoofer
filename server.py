@@ -364,9 +364,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_chunk(self, data: bytes):
+        chunk = f"{len(data):X}\r\n".encode("ascii") + data + b"\r\n"
+        self.wfile.write(chunk)
+        self.wfile.flush()
+
     def _handle_sse(self, worker: ClientWorker):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Transfer-Encoding", "chunked")
         self.send_header("Cache-Control", "no-cache, no-transform")
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
@@ -379,27 +385,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         try:
             init_msg = json.dumps({"type": "init", "status": worker.get_status_data(), "logs": worker.log_history[-100:]})
-            self.wfile.write(("data: " + init_msg + "\n\n").encode("utf-8"))
-            self.wfile.flush()
+            self._send_chunk(("data: " + init_msg + "\n\n").encode("utf-8"))
         except Exception:
             return
 
         try:
             while True:
                 try:
-                    event = q.get(timeout=20)
+                    event = q.get(timeout=15)
                     payload = json.dumps(event)
-                    self.wfile.write(("data: " + payload + "\n\n").encode("utf-8"))
-                    self.wfile.flush()
+                    self._send_chunk(("data: " + payload + "\n\n").encode("utf-8"))
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
+                    self._send_chunk(b": ping\n\n")
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
             with worker.lock:
                 if q in worker.listeners:
                     worker.listeners.remove(q)
+            try:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except Exception:
+                pass
 
 def run_web_server(port: int = 7860, host: str = "0.0.0.0"):
     print("\n==================================================")
